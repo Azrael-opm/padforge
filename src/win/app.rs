@@ -1,6 +1,6 @@
 //! Process entry: load config, start engine + capture threads, run GUI or headless.
 
-use super::{gui, input, tray, vpad::VigemBackend};
+use super::{games, gui, input, tray, vpad::VigemBackend};
 use crate::config::Config;
 use crate::engine::{Engine, Msg};
 use crate::shared::Shared;
@@ -84,7 +84,9 @@ fn fatal(msg: &str) -> ! {
 pub fn main() {
     let args: Vec<String> = std::env::args().collect();
     let headless = args.iter().any(|a| a == "--headless");
-    let force_enable = args.iter().any(|a| a == "--enable");
+    let mut force_enable = args.iter().any(|a| a == "--enable");
+    // `--launch "<profile>"`: start that profile's game, enable emulation.
+    let launch_profile = args.iter().position(|a| a == "--launch").and_then(|i| args.get(i + 1)).cloned();
     let config_path = args
         .iter()
         .position(|a| a == "--config")
@@ -97,6 +99,23 @@ pub fn main() {
     }
 
     let (mut config, load_error) = load_config(&config_path);
+    let mut launched = false;
+    if let Some(name) = &launch_profile {
+        let p = config.profiles.iter().find(|p| p.name.eq_ignore_ascii_case(name));
+        match p.map(|p| (p.game_path.clone(), p.launch_args.clone())) {
+            Some((path, args)) if !path.is_empty() => match games::launch(&path, &args) {
+                Ok(()) => {
+                    launched = true;
+                    force_enable |= config.settings.enable_on_launch;
+                }
+                Err(e) => fatal(&e),
+            },
+            Some(_) => fatal(&format!("Profile \"{name}\" has no game executable set.")),
+            None => fatal(&format!("No profile named \"{name}\".")),
+        }
+    }
+    // CLI overrides apply to the engine only, never to the saved config.
+    let saved_start_enabled = config.settings.start_enabled;
     if force_enable {
         config.settings.start_enabled = true;
     }
@@ -111,6 +130,7 @@ pub fn main() {
 
     let engine_shared = shared.clone();
     let engine_config = config.clone();
+    config.settings.start_enabled = saved_start_enabled;
     let engine = std::thread::Builder::new()
         .name("padforge-engine".into())
         .spawn(move || {
@@ -150,7 +170,8 @@ pub fn main() {
         let _ = engine.join();
     } else {
         let paths = Paths { config: config_path };
-        gui::run(shared.clone(), tx.clone(), config, paths, load_error);
+        let start_hidden = launched && config.settings.hide_on_launch;
+        gui::run(shared.clone(), tx.clone(), config, paths, load_error, start_hidden);
         let _ = tx.send(Msg::Shutdown);
         let _ = engine.join();
     }

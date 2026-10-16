@@ -68,6 +68,21 @@ pub struct Settings {
     pub start_in_tray: bool,
     /// Short system sound when emulation is toggled (handy in fullscreen).
     pub toggle_sound: bool,
+    /// GUI colour scheme.
+    pub theme: Theme,
+    /// Turn emulation on when a game is launched from PadForge.
+    pub enable_on_launch: bool,
+    /// Hide the window to the tray when a game is launched from PadForge
+    /// (a hidden window costs no rendering at all).
+    pub hide_on_launch: bool,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Theme {
+    #[default]
+    Dark,
+    Light,
 }
 
 impl Default for Settings {
@@ -87,6 +102,9 @@ impl Default for Settings {
             close_to_tray: true,
             start_in_tray: false,
             toggle_sound: true,
+            theme: Theme::Dark,
+            enable_on_launch: true,
+            hide_on_launch: true,
         }
     }
 }
@@ -294,9 +312,28 @@ pub struct Profile {
     pub name: String,
     /// Executable file names (e.g. "eldenring.exe") that auto-select this profile.
     pub executables: Vec<String>,
+    /// Full path of the game executable, used to launch it from PadForge.
+    /// Its file name is also added to `executables` for auto-detection.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub game_path: String,
+    /// Optional command-line arguments for the launch.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub launch_args: String,
     pub mouse: MouseConfig,
     /// Layer 0 is the base layer and always active.
     pub layers: Vec<Layer>,
+}
+
+impl Profile {
+    /// Lower-case file name of `game_path` (e.g. "eldenring.exe").
+    pub fn game_exe(&self) -> Option<String> {
+        let p = self.game_path.trim();
+        if p.is_empty() {
+            return None;
+        }
+        let name = p.rsplit(['\\', '/']).next().unwrap_or(p).trim().to_ascii_lowercase();
+        (!name.is_empty()).then_some(name)
+    }
 }
 
 impl Default for Profile {
@@ -304,6 +341,8 @@ impl Default for Profile {
         Profile {
             name: "New profile".into(),
             executables: vec![],
+            game_path: String::new(),
+            launch_args: String::new(),
             mouse: MouseConfig::default(),
             layers: vec![Layer { name: "Base".into(), binds: vec![] }],
         }
@@ -366,9 +405,8 @@ impl Profile {
         ];
         Profile {
             name: "Default".into(),
-            executables: vec![],
-            mouse: MouseConfig::default(),
             layers: vec![Layer { name: "Base".into(), binds: base }, Layer { name: "Alt".into(), binds: alt }],
+            ..Default::default()
         }
     }
 }
@@ -407,6 +445,12 @@ impl Config {
                 *e = e.trim().to_ascii_lowercase();
             }
             p.executables.retain(|e| !e.is_empty());
+            // The launchable game is always auto-detected too.
+            if let Some(exe) = p.game_exe() {
+                if !p.executables.contains(&exe) {
+                    p.executables.insert(0, exe);
+                }
+            }
         }
     }
 }
@@ -421,6 +465,17 @@ mod tests {
         assert_eq!(macro_from_text(&macro_to_text(&steps)).unwrap(), steps);
         assert!(macro_from_text("tap zz").is_err());
         assert!(macro_from_text("jump a").is_err());
+    }
+
+    #[test]
+    fn game_path_adds_executable() {
+        let mut c = Config::default();
+        c.profiles.push(Profile { game_path: r"C:\Games\Elden Ring\Game\EldenRing.exe".into(), ..Default::default() });
+        c.normalize();
+        assert_eq!(c.profiles[1].game_exe().as_deref(), Some("eldenring.exe"));
+        assert_eq!(c.profiles[1].executables, vec!["eldenring.exe".to_string()]);
+        c.normalize();
+        assert_eq!(c.profiles[1].executables.len(), 1);
     }
 
     #[test]

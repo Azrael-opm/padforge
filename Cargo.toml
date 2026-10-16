@@ -1,6 +1,6 @@
 [package]
 name = "padforge"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Lightweight, low-latency keyboard & mouse to virtual Xbox 360 / DualShock 4 controller mapper"
 license = "MIT"
@@ -35,6 +35,8 @@ windows-sys = { version = "0.61", features = [
     "Win32_Graphics_Gdi",
     "Win32_UI_Shell",
     "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_UI_Controls_Dialogs",
 ] }
 
 [profile.release]
