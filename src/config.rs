@@ -62,6 +62,12 @@ pub struct Settings {
     pub keep_connected: bool,
     pub high_priority: bool,
     pub socd: Socd,
+    /// Closing the window keeps PadForge running in the system tray.
+    pub close_to_tray: bool,
+    /// Start hidden in the tray.
+    pub start_in_tray: bool,
+    /// Short system sound when emulation is toggled (handy in fullscreen).
+    pub toggle_sound: bool,
 }
 
 impl Default for Settings {
@@ -78,6 +84,9 @@ impl Default for Settings {
             keep_connected: true,
             high_priority: true,
             socd: Socd::LastWins,
+            close_to_tray: true,
+            start_in_tray: false,
+            toggle_sound: true,
         }
     }
 }

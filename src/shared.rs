@@ -3,7 +3,7 @@
 
 use crate::keys::{InputId, NUM_INPUTS};
 use crate::pad::{ControllerKind, PadState};
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering::*};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering::*};
 use std::sync::Mutex;
 
 const WORDS: usize = NUM_INPUTS / 64;
@@ -34,6 +34,10 @@ pub struct Status {
     pub config_errors: Vec<String>,
 }
 
+pub const GUI_REQ_NONE: u8 = 0;
+pub const GUI_REQ_SHOW: u8 = 1;
+pub const GUI_REQ_QUIT: u8 = 2;
+
 pub struct Shared {
     block: [AtomicU64; WORDS],
     /// Emulation active: hooks forward events and honour the block table.
@@ -51,6 +55,16 @@ pub struct Shared {
     pub stats: Stats,
     pub status: Mutex<Status>,
     pub quit: AtomicBool,
+    /// Native handle of the GUI window (0 = none / headless).
+    pub gui_window: AtomicUsize,
+    /// GUI window is hidden in the tray.
+    pub gui_hidden: AtomicBool,
+    /// Pending request from the tray to the GUI thread (GUI_REQ_*).
+    pub gui_request: AtomicU8,
+    pub toggle_sound: AtomicBool,
+    /// Called (rarely) when activity/profile/config status changes, so the
+    /// GUI and tray update on events instead of polling.
+    listeners: Mutex<Vec<Box<dyn Fn() + Send + Sync>>>,
 }
 
 impl Default for Shared {
@@ -67,6 +81,11 @@ impl Default for Shared {
             stats: Stats::default(),
             status: Mutex::new(Status::default()),
             quit: AtomicBool::new(false),
+            gui_window: AtomicUsize::new(0),
+            gui_hidden: AtomicBool::new(false),
+            gui_request: AtomicU8::new(0),
+            toggle_sound: AtomicBool::new(true),
+            listeners: Mutex::new(Vec::new()),
         }
     }
 }
@@ -101,6 +120,16 @@ impl Shared {
     pub fn status_mut<R>(&self, f: impl FnOnce(&mut Status) -> R) -> R {
         let mut g = self.status.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut g)
+    }
+
+    pub fn add_listener(&self, f: impl Fn() + Send + Sync + 'static) {
+        self.listeners.lock().unwrap_or_else(|e| e.into_inner()).push(Box::new(f));
+    }
+
+    pub fn notify(&self) {
+        for f in self.listeners.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+            f();
+        }
     }
 
     pub fn status_snapshot(&self) -> Status {

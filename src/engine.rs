@@ -257,6 +257,7 @@ impl<B: Backend> Engine<B> {
         let s = &self.config.settings;
         self.shared.toggle_input.store(toggle_id, Relaxed);
         self.shared.recenter_cursor.store(s.recenter_cursor, Relaxed);
+        self.shared.toggle_sound.store(s.toggle_sound, Relaxed);
         self.shared.mouse_source.store(
             match s.mouse_source {
                 MouseSource::Auto => 0,
@@ -367,6 +368,7 @@ impl<B: Backend> Engine<B> {
             st.active_layers = layers;
         });
         self.output(now, None);
+        self.shared.notify();
     }
 
     /// Release everything and centre the controller.

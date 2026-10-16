@@ -1,5 +1,7 @@
 # PadForge
 
+[![CI](https://github.com/Azrael-opm/padforge/actions/workflows/ci.yml/badge.svg)](https://github.com/Azrael-opm/padforge/actions/workflows/ci.yml)
+
 A lightweight, low-latency **keyboard & mouse → virtual controller** mapper for Windows, in the spirit of reWASD / Key2Joy.
 Games see a real **Xbox 360 (XInput)** or **DualShock 4** controller while you play on mouse and keyboard.
 
@@ -14,16 +16,30 @@ Games see a real **Xbox 360 (XInput)** or **DualShock 4** controller while you p
 - **Layers** (hold/toggle, transparent fall-through), **turbo**, **toggle (latch)** buttons, **macros** (`tap a, wait 50, press rb, ...`, optional repeat-while-held), **walk modifier** (stick scale), analog trigger values, SOCD handling for WASD
 - **Global toggle hotkey** (default **F8**). Emulation also pauses automatically while the PadForge window is focused
 - Single portable `.exe` (~7 MB), config is a readable `padforge.toml` next to it
-- `--headless` mode with no GUI for the smallest footprint
+- **System tray**: the icon colour shows the state (green = emulating, amber = paused, grey = off). Left-click shows the window, right-click opens a menu (profile, enable, config folder, quit). Optional sound when toggling, useful in fullscreen games
+- **Close to tray** and **start hidden in tray**
+- `--headless` mode: tray only, no GUI, for the smallest footprint
 
 ## Install & run
 
 1. Install **ViGEmBus 1.22.0** (one time): https://github.com/nefarius/ViGEmBus/releases
    It may already be installed if you use Steam Input or DS4Windows.
-2. Run `padforge.exe`. A default profile is created in `padforge.toml`.
-3. Focus your game and press **F8**. The status button turns green (**EMULATING**).
+2. Download `padforge.exe` from [**Releases**](https://github.com/Azrael-opm/padforge/releases) (check it against the `.sha256` file if you like), or grab the build artifact from the latest [CI run](https://github.com/Azrael-opm/padforge/actions).
+3. Run it. A default profile is created in `padforge.toml` next to the exe.
+4. Focus your game and press **F8**. The status button and the tray icon turn green (**EMULATING**).
 
-CLI flags: `--headless`, `--enable` (start enabled), `--config <path>`.
+Closing the window keeps PadForge running in the tray (change this in **Settings**). Quit from the tray menu.
+
+CLI flags:
+
+| Flag | Effect |
+|---|---|
+| `--headless` | No window, tray icon only. When started from a terminal, logs go there and Ctrl+C quits |
+| `--console` | With `--headless`: open a console window even when not started from a terminal |
+| `--enable` | Start with emulation enabled |
+| `--config <path>` | Use a different config file |
+
+Set the environment variable `PADFORGE_DEBUG=1` to write a diagnostic log to `%TEMP%\padforge-debug.log`.
 
 ## Build
 
@@ -39,6 +55,9 @@ cargo build --release --target x86_64-pc-windows-gnu
 # Core unit tests (platform-neutral, run anywhere)
 cargo test --lib
 ```
+
+CI (GitHub Actions) runs clippy and the tests on Linux and Windows, and builds the release exe on every push.
+Pushing a tag like `v0.2.0` publishes a GitHub release with the exe, its SHA-256 and the changelog notes.
 
 ## Architecture
 
@@ -60,7 +79,8 @@ cargo test --lib
  ┌────▼─────────────────────────┐
  │ ViGEmBus: X360 / DS4 target  │
  └──────────────────────────────┘
- GUI (egui/glow) repaints only on interaction; 20 Hz live view only while emulating.
+ GUI (egui/glow) and tray are woken by engine status events (no polling);
+ 20 Hz live view only while emulating and visible; no rendering at all while hidden in the tray.
 ```
 
 | Module | Role |
@@ -74,6 +94,8 @@ cargo test --lib
 | `src/win/input.rs` | Hooks, Raw Input, foreground watcher |
 | `src/win/vpad.rs` | ViGEmBus backend |
 | `src/win/gui.rs` | egui interface |
+| `src/win/tray.rs` | Tray icon, menu, notifications (raw `Shell_NotifyIcon`) |
+| `src/icon.rs` | Procedurally drawn app/tray icon (no image files) |
 
 ## Config example
 
@@ -117,15 +139,16 @@ These items need a real Windows PC:
 4. **Mouse source:** the left panel shows "Mouse source: raw input" or "hook". If it says hook and mouse feel varies with pointer speed, turn off Windows "Enhance pointer precision".
 5. **No stuck keys:** hold W, press F8 (disable), release W. Notepad must not repeat `w` forever.
 6. **Auto-profile:** add a game's exe to a profile; focusing the game should switch to it ("> name (active)").
-7. **Resources:** Task Manager shows ~0 % CPU while idle. Memory is mostly the GUI (OpenGL); `--headless` is the minimal mode.
+7. **Resources:** Task Manager shows ~0 % CPU while idle, both with the window open and hidden in the tray. Memory is mostly the GUI (OpenGL); `--headless` is the minimal mode. (Under Wine every winit app busy-waits at ~50 % of a core, so this can only be measured on Windows.)
 8. **Latency:** the header shows internal latency (event → driver), which should be in the tens of µs.
+9. **Tray:** the icon turns green/amber/grey with F8 and focus changes. Closing the window hides it to the tray with a one-time notification; left-click brings it back; tray > Quit exits; restarting Explorer brings the icon back.
 
 ## Limitations / roadmap
 
 - User-mode hooks can't tell multiple keyboards/mice apart. A per-device mode would need a filter driver (e.g. Interception).
 - If a game reads Raw Input and Windows still delivers its mouse movement despite the hook swallowing it, the game sees both mouse and stick. Test item 4 reveals this.
 - ViGEmBus is archived (still works, signed). Its successor (VirtualPad) can be added as a second backend behind the `Backend` trait.
-- Planned: tray icon, gyro/touchpad emulation for DS4, rumble passthrough, per-profile controller type, import of Key2Joy profiles.
+- Planned: gyro/touchpad emulation for DS4, rumble passthrough, per-profile controller type, import of Key2Joy profiles.
 
 ## Fair play
 

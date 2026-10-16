@@ -1,6 +1,6 @@
 [package]
 name = "padforge"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Lightweight, low-latency keyboard & mouse to virtual Xbox 360 / DualShock 4 controller mapper"
 license = "MIT"
@@ -19,6 +19,7 @@ toml = "0.9"
 
 [target.'cfg(windows)'.dependencies]
 vigem-client = { version = "0.1.4", features = ["unstable_ds4"] }
+raw-window-handle = "0.6"
 eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts"] }
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
@@ -33,6 +34,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Media",
     "Win32_Graphics_Gdi",
     "Win32_UI_Shell",
+    "Win32_System_Diagnostics_Debug",
 ] }
 
 [profile.release]

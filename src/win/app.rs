@@ -1,6 +1,6 @@
 //! Process entry: load config, start engine + capture threads, run GUI or headless.
 
-use super::{gui, input, vpad::VigemBackend};
+use super::{gui, input, tray, vpad::VigemBackend};
 use crate::config::Config;
 use crate::engine::{Engine, Msg};
 use crate::shared::Shared;
@@ -127,9 +127,14 @@ pub fn main() {
         Err(e) => fatal(&format!("Could not start input capture: {e}")),
     };
 
+    let config_dir = config_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+    let tray_thread = tray::spawn(shared.clone(), tx.clone(), config_dir, !headless);
+
     if headless {
+        // Tray-only background mode. Logs go to the parent console when
+        // started from a terminal (Ctrl+C quits); `--console` forces one.
         unsafe {
-            if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            if AttachConsole(ATTACH_PARENT_PROCESS) == 0 && args.iter().any(|a| a == "--console") {
                 AllocConsole();
             }
         }
@@ -141,7 +146,7 @@ pub fn main() {
             eprintln!("{e}");
         }
         println!("PadForge running headless. Config: {}", config_path.display());
-        println!("Toggle emulation with {}. Ctrl+C to quit.", config.settings.toggle_hotkey);
+        println!("Toggle emulation with {} or the tray icon. Ctrl+C or tray > Quit to exit.", config.settings.toggle_hotkey);
         let _ = engine.join();
     } else {
         let paths = Paths { config: config_path };
@@ -151,6 +156,10 @@ pub fn main() {
     }
 
     shared.quit.store(true, Relaxed);
+    tray::stop();
+    if let Some(t) = tray_thread {
+        let _ = t.join();
+    }
     input::stop();
     let _ = input_thread.join();
 }

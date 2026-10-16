@@ -3,6 +3,7 @@
 //! refreshes (20 Hz) while emulation is actually active.
 
 use super::app::{load_config, save_config, Paths};
+use super::tray;
 use super::vpad::VIGEM_URL;
 use crate::config::*;
 use crate::engine::Msg;
@@ -56,12 +57,19 @@ pub struct GuiApp {
     /// Per-bind macro text buffers keyed by (profile, layer, bind).
     macro_text: std::collections::HashMap<(usize, usize, usize), (String, Option<String>)>,
     exes_text: (usize, String),
+    told_about_tray: bool,
+    /// "Start in tray": eframe always shows the window after the first
+    /// painted frame, so we hide it right after that.
+    hide_after_first_frame: bool,
 }
 
 pub fn run(shared: Arc<Shared>, tx: SyncSender<Msg>, config: Config, paths: Paths, load_error: Option<String>) {
+    let start_hidden = config.settings.start_in_tray;
+    let icon = egui::IconData { rgba: crate::icon::render_rgba(64, crate::icon::COLOR_BRAND), width: 64, height: 64 };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("PadForge")
+            .with_icon(icon)
             .with_inner_size([1000.0, 700.0])
             .with_min_inner_size([780.0, 520.0]),
         ..Default::default()
@@ -81,8 +89,25 @@ pub fn run(shared: Arc<Shared>, tx: SyncSender<Msg>, config: Config, paths: Path
         saved_at: None,
         status: Status::default(),
         macro_text: Default::default(),
+        told_about_tray: false,
+        hide_after_first_frame: start_hidden,
     };
-    let _ = eframe::run_native("PadForge", options, Box::new(|_cc| Ok(Box::new(app))));
+    let _ = eframe::run_native(
+        "PadForge",
+        options,
+        Box::new(move |cc| {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(h) = cc.window_handle() {
+                if let RawWindowHandle::Win32(w) = h.as_raw() {
+                    app.shared.gui_window.store(w.hwnd.get() as usize, Relaxed);
+                }
+            }
+            // Engine status changes wake the GUI (no polling).
+            let ctx = cc.egui_ctx.clone();
+            app.shared.add_listener(move || ctx.request_repaint());
+            Ok(Box::new(app))
+        }),
+    );
 }
 
 fn open_url(url: &str) {
@@ -542,6 +567,18 @@ impl GuiApp {
             ui.label("Above-normal priority").on_hover_text("Applies on next start");
             changed |= ui.checkbox(&mut s.high_priority, "").changed();
             ui.end_row();
+
+            ui.label("Close button hides to tray");
+            changed |= ui.checkbox(&mut s.close_to_tray, "").changed();
+            ui.end_row();
+
+            ui.label("Start hidden in tray");
+            changed |= ui.checkbox(&mut s.start_in_tray, "").changed();
+            ui.end_row();
+
+            ui.label("Sound on toggle").on_hover_text("Short system sound when emulation is switched on/off (useful in fullscreen games)");
+            changed |= ui.checkbox(&mut s.toggle_sound, "").changed();
+            ui.end_row();
         });
         ui.add_space(10.0);
         ui.horizontal(|ui| {
@@ -604,16 +641,66 @@ impl GuiApp {
     }
 }
 
+impl GuiApp {
+    fn hide_to_tray(&mut self, ctx: &egui::Context) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        self.shared.gui_hidden.store(true, Relaxed);
+        if self.dirty_since.is_some() {
+            let _ = save_config(&self.paths.config, &self.config);
+            self.dirty_since = None;
+        }
+    }
+}
+
 impl eframe::App for GuiApp {
+    /// Runs every pass, including while the window is hidden in the tray.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        use crate::shared::{GUI_REQ_NONE, GUI_REQ_QUIT, GUI_REQ_SHOW};
+        match self.shared.gui_request.swap(GUI_REQ_NONE, Relaxed) {
+            GUI_REQ_SHOW => {
+                self.shared.gui_hidden.store(false, Relaxed);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                self.shared.notify(); // tray menu state
+            }
+            GUI_REQ_QUIT => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                ctx.request_repaint(); // the close is handled on the next pass
+            }
+            _ => {}
+        }
+
+        // Close button -> hide to tray (unless quitting from the tray menu).
+        if ctx.input(|i| i.viewport().close_requested()) && self.config.settings.close_to_tray && !self.shared.quit.load(Relaxed) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.hide_to_tray(ctx);
+            if !self.told_about_tray {
+                self.told_about_tray = true;
+                tray::balloon("PadForge is still running", "It keeps working from the tray. Right-click the icon to quit.");
+            }
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.status = self.shared.status_snapshot();
         self.poll_capture(&ctx);
         self.autosave(&ctx);
-        if self.status.active {
-            ctx.request_repaint_after(Duration::from_millis(50)); // live view
-        } else {
-            ctx.request_repaint_after(Duration::from_millis(500)); // status changes
+
+        if self.hide_after_first_frame {
+            if ui.ctx().cumulative_pass_nr() >= 1 {
+                self.hide_after_first_frame = false;
+                self.hide_to_tray(&ctx);
+            } else {
+                ctx.request_repaint();
+            }
+        }
+
+        // Repaint policy: hidden = never; emulating = 20 Hz live view;
+        // otherwise only on input or engine status events.
+        if self.status.active && !self.shared.gui_hidden.load(Relaxed) {
+            ctx.request_repaint_after(Duration::from_millis(50));
         }
 
         egui::Panel::top("top").show(ui, |ui| {
