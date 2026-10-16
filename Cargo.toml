@@ -1,0 +1,46 @@
+[package]
+name = "padforge"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight, low-latency keyboard & mouse to virtual Xbox 360 / DualShock 4 controller mapper"
+license = "MIT"
+
+[lib]
+name = "padforge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "padforge"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+vigem-client = { version = "0.1.4", features = ["unstable_ds4"] }
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Accessibility",
+    "Win32_UI_HiDpi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_System_Console",
+    "Win32_Media",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Shell",
+] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 1
